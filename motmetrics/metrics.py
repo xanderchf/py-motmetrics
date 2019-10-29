@@ -5,7 +5,7 @@ https://github.com/cheind/py-motmetrics
 """
 
 from __future__ import division
-from collections import OrderedDict, Iterable
+from collections import OrderedDict, Iterable, defaultdict
 from motmetrics.mot import MOTAccumulator
 from motmetrics.lap import linear_sum_assignment
 import pandas as pd
@@ -36,24 +36,24 @@ class MetricsHost:
             is passed as argument to `fnc` as described above. If None is specified, the
             function does not have any dependencies. If a list of strings is given, dependencies
             for these metric strings are registered. If 'auto' is passed, the dependencies
-            are deduced from argument inspection of the method. For this to work the argument 
+            are deduced from argument inspection of the method. For this to work the argument
             names have to be equal to the intended dependencies.
         name : string or None, optional
             Name identifier of this metric. If None is passed the name is deduced from
             function inspection.
-        helpstr : string or None, optional 
+        helpstr : string or None, optional
             A description of what the metric computes. If no help message is given it
             is deduced from the docstring of the function.
         formatter: Format object, optional
             An optional default formatter when rendering metric results as string. I.e to
             render the result `0.35` as `35%` one would pass `{:.2%}.format`
-        """        
+        """
 
         assert not fnc is None, 'No function given for metric {}'.format(name)
 
         if deps is None:
             deps = []
-        elif deps is 'auto':            
+        elif deps is 'auto':
             deps = inspect.getargspec(fnc).args[1:] # assumes dataframe as first argument
 
         if name is None:
@@ -62,7 +62,7 @@ class MetricsHost:
         if helpstr is None:
             helpstr = inspect.getdoc(fnc) if inspect.getdoc(fnc) else 'No description.'
             helpstr = ' '.join(helpstr.split())
-            
+
         self.metrics[name] = {
             'name' : name,
             'fnc' : fnc,
@@ -75,7 +75,7 @@ class MetricsHost:
     def names(self):
         """Returns the name identifiers of all registered metrics."""
         return [v['name'] for v in self.metrics.values()]
-    
+
     @property
     def formatters(self):
         """Returns the formatters for all metrics that have associated formatters."""
@@ -102,12 +102,12 @@ class MetricsHost:
 
     def compute(self, df, metrics=None, return_dataframe=True, return_cached=False, name=None):
         """Compute metrics on the dataframe / accumulator.
-        
+
         Params
         ------
         df : MOTAccumulator or pandas.DataFrame
             The dataframe to compute the metrics on
-        
+
         Kwargs
         ------
         metrics : string, list of string or None, optional
@@ -121,8 +121,8 @@ class MetricsHost:
         name : string, optional
             When returning a pandas.DataFrame this is the index of the row containing
             the computed metric values.
-        """ 
-        
+        """
+
         if isinstance(df, MOTAccumulator):
             df = df.events
 
@@ -133,32 +133,32 @@ class MetricsHost:
 
         class DfMap : pass
         df_map = DfMap()
-        df_map.full = df     
+        df_map.full = df
         df_map.raw = df[df.Type == 'RAW']
         df_map.noraw = df[df.Type != 'RAW']
 
         cache = {}
         for mname in metrics:
-            cache[mname] = self._compute(df_map, mname, cache, parent='summarize')            
+            cache[mname] = self._compute(df_map, mname, cache, parent='summarize')
 
         if name is None:
-            name = 0 
+            name = 0
 
         if return_cached:
             data = cache
         else:
             data = OrderedDict([(k, cache[k]) for k in metrics])
-            
-        return pd.DataFrame(data, index=[name]) if return_dataframe else data     
+
+        return pd.DataFrame(data, index=[name]) if return_dataframe else data
 
     def compute_many(self, dfs, metrics=None, names=None, generate_overall=False):
         """Compute metrics on multiple dataframe / accumulators.
-        
+
         Params
         ------
         dfs : list of MOTAccumulator or list of pandas.DataFrame
             The data to compute metrics on.
-        
+
         Kwargs
         ------
         metrics : string, list of string or None, optional
@@ -193,7 +193,7 @@ class MetricsHost:
 
     def _compute(self, df_map, name, cache, parent=None):
         """Compute metric and resolve dependencies."""
-        assert name in self.metrics, 'Cannot find metric {} required by {}.'.format(name, parent)        
+        assert name in self.metrics, 'Cannot find metric {} required by {}.'.format(name, parent)
 
         minfo = self.metrics[name]
         vals = []
@@ -253,7 +253,7 @@ def num_predictions(df):
     return df.noraw.HId.count()
 
 def track_ratios(df, obj_frequencies):
-    """Ratio of assigned to total appearance count per unique object id."""   
+    """Ratio of assigned to total appearance count per unique object id."""
     tracked = df.noraw[df.noraw.Type != 'MISS']['OId'].value_counts()
     return tracked.div(obj_frequencies).fillna(0.)
 
@@ -285,6 +285,40 @@ def num_fragmentations(df, obj_frequencies):
         fra += diffs[diffs == 1].count()
     return fra
 
+def re_id_success_rate(df, obj_frequencies):
+    r_1 = 0
+    r_2 = 0
+    r_31 = 0
+    r_32 = 0
+    last_occurrence = dict()
+    last_match = dict()
+    reappear_not_yet_found = defaultdict(bool)
+    for i, row in df.noraw.iterrows():
+        if row.OId != row.OId:
+            continue
+        f = i[0]
+        if row.OId in last_occurrence.keys() and last_occurrence[row.OId] != f - 1:
+            # reappear from occlusion
+            if row.OId in last_match.keys():
+                # previously matched, missed in current frame
+                if row['Type'] == 'MISS':
+                    reappear_not_yet_found[row.OId] = True
+                elif row['Type'] == 'MATCH':
+                    r_1 += 1
+                elif row['Type'] == 'SWITCH':
+                    r_2 += 1
+        elif reappear_not_yet_found[row.OId]:
+            if row['Type'] == 'MATCH':
+                r_31 += 1
+                reappear_not_yet_found[row.OId] = False
+            elif row['Type'] == 'SWITCH':
+                r_32 += 1
+                reappear_not_yet_found[row.OId] = False
+        if row['Type'] == 'MATCH' or row['Type'] == 'SWITCH':
+            last_match[row.OId] = row.HId
+        last_occurrence[row.OId] = f
+    return (r_1 + r_31) / (r_1 + r_2 + r_31 + r_32)
+
 def motp(df, num_detections):
     """Multiple object tracker precision."""
     return df.noraw['D'].sum() / num_detections
@@ -312,16 +346,16 @@ def id_global_assignment(df):
     ocs = [len(df.raw[(df.raw.OId==o)].groupby(level=0)) for o in oids]
 
     no = oids.shape[0]
-    nh = hids.shape[0]   
+    nh = hids.shape[0]
 
-    df = df.raw.reset_index()    
-    df = df.set_index(['OId','HId']) 
+    df = df.raw.reset_index()
+    df = df.set_index(['OId','HId'])
     df = df.sort_index(level=[0,1])
 
     fpmatrix = np.full((no+nh, no+nh), 0.)
     fnmatrix = np.full((no+nh, no+nh), 0.)
     fpmatrix[no:, :nh] = np.nan
-    fnmatrix[:no, nh:] = np.nan 
+    fnmatrix[:no, nh:] = np.nan
 
     for r, oc in enumerate(ocs):
         fnmatrix[r, :nh] = oc
@@ -333,13 +367,13 @@ def id_global_assignment(df):
 
     for r, o in enumerate(oids):
         df_o = df.loc[o, 'D'].dropna()
-        for h, ex in df_o.groupby(level=0).count().iteritems():            
+        for h, ex in df_o.groupby(level=0).count().iteritems():
             c = hids_idx[h]
 
             fpmatrix[r,c] -= ex
             fnmatrix[r,c] -= ex
 
-    costs = fpmatrix + fnmatrix    
+    costs = fpmatrix + fnmatrix
     rids, cids = linear_sum_assignment(costs)
 
     return {
@@ -382,7 +416,7 @@ def create():
     m = MetricsHost()
 
     m.register(num_frames, formatter='{:d}'.format)
-    m.register(obj_frequencies, formatter='{:d}'.format)    
+    m.register(obj_frequencies, formatter='{:d}'.format)
     m.register(pred_frequencies, formatter='{:d}'.format)
     m.register(num_matches, formatter='{:d}'.format)
     m.register(num_switches, formatter='{:d}'.format)
@@ -397,11 +431,12 @@ def create():
     m.register(partially_tracked, formatter='{:d}'.format)
     m.register(mostly_lost, formatter='{:d}'.format)
     m.register(num_fragmentations)
+    m.register(re_id_success_rate)
     m.register(motp, formatter='{:.3f}'.format)
     m.register(mota, formatter='{:.1%}'.format)
     m.register(precision, formatter='{:.1%}'.format)
     m.register(recall, formatter='{:.1%}'.format)
-    
+
     m.register(id_global_assignment)
     m.register(idfp)
     m.register(idfn)
@@ -417,16 +452,17 @@ motchallenge_metrics = [
     'idf1',
     'idp',
     'idr',
-    'recall', 
-    'precision', 
-    'num_unique_objects', 
-    'mostly_tracked', 
-    'partially_tracked', 
-    'mostly_lost', 
-    'num_false_positives', 
+    'recall',
+    'precision',
+    'num_unique_objects',
+    'mostly_tracked',
+    'partially_tracked',
+    'mostly_lost',
+    'num_false_positives',
     'num_misses',
     'num_switches',
     'num_fragmentations',
+    're_id_success_rate',
     'mota',
     'motp'
 ]
