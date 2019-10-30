@@ -317,7 +317,8 @@ def re_id_success_rate(df, obj_frequencies):
         if row['Type'] == 'MATCH' or row['Type'] == 'SWITCH':
             last_match[row.OId] = row.HId
         last_occurrence[row.OId] = f
-    return (r_1 + r_31) / (r_1 + r_2 + r_31 + r_32)
+    total = r_1 + r_2 + r_31 + r_32
+    return (r_1 + r_31) / total if total > 0 else -1
 
 def motp(df, num_detections):
     """Multiple object tracker precision."""
