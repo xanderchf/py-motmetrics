@@ -5,10 +5,11 @@ https://github.com/cheind/py-motmetrics
 """
 
 import numpy as np
+import pycocotools.mask as maskUtils
 
 def norm2squared_matrix(objs, hyps, max_d2=float('inf')):
     """Computes the squared Euclidean distance matrix between object and hypothesis points.
-    
+
     Params
     ------
     objs : NxM array
@@ -36,9 +37,9 @@ def norm2squared_matrix(objs, hyps, max_d2=float('inf')):
         return np.empty((0,0))
 
     assert hyps.shape[1] == objs.shape[1], "Dimension mismatch"
-    
+
     C = np.empty((objs.shape[0], hyps.shape[0]))
-        
+
     for o in range(objs.shape[0]):
         for h in range(hyps.shape[0]):
             e = objs[o] - hyps[h]
@@ -51,14 +52,14 @@ def norm2squared_matrix(objs, hyps, max_d2=float('inf')):
 def iou_matrix(objs, hyps, max_iou=1.):
     """Computes 'intersection over union (IoU)' distance matrix between object and hypothesis rectangles.
 
-    The IoU is computed as 
-        
+    The IoU is computed as
+
         IoU(a,b) = 1. - isect(a, b) / union(a, b)
 
     where isect(a,b) is the area of intersection of two rectangles and union(a, b) the area of union. The
     IoU is bounded between zero and one. 0 when the rectangles overlap perfectly and 1 when the overlap is
     zero.
-    
+
     Params
     ------
     objs : Nx4 array
@@ -106,9 +107,22 @@ def iou_matrix(objs, hyps, max_iou=1.):
 
     C[C > max_iou] = np.nan
     return C
-    
 
 
+def mask_iou_matrix(objs, hyps, max_iou=1.):
+    """Computes 'intersection over union (IoU)' distance matrix between object and hypothesis masks.
 
+    C : NxK array
+        Distance matrix containing pairwise distances or np.nan.
+    """
 
-
+    if len(objs) == 0 or len(hyps) == 0:
+        return np.empty((0,0))
+    # FIXME: add crowd attribute
+    iscrowd = np.zeros(len(objs))
+    # FIXME: remove height and weight
+    objs = [maskUtils.frPyObjects(obj, 720, 1280) for obj in objs]
+    objs = [maskUtils.merge(o) for o in objs]
+    C = 1 - maskUtils.iou(hyps, objs, iscrowd)
+    C[C > max_iou] = np.nan
+    return C.transpose()

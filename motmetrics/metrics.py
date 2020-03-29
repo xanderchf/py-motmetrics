@@ -286,8 +286,10 @@ def num_fragmentations(df, obj_frequencies):
     return fra
 
 def re_id_success_rate(df, obj_frequencies):
+    r_0 = 0
     r_1 = 0
     r_2 = 0
+    r_3 = 0
     r_31 = 0
     r_32 = 0
     last_occurrence = dict()
@@ -302,11 +304,14 @@ def re_id_success_rate(df, obj_frequencies):
             if row.OId in last_match.keys():
                 # previously matched, missed in current frame
                 if row['Type'] == 'MISS':
+                    r_3 += 1
                     reappear_not_yet_found[row.OId] = True
                 elif row['Type'] == 'MATCH':
                     r_1 += 1
                 elif row['Type'] == 'SWITCH':
                     r_2 += 1
+            else:
+                r_0 += 1
         elif reappear_not_yet_found[row.OId]:
             if row['Type'] == 'MATCH':
                 r_31 += 1
@@ -318,6 +323,7 @@ def re_id_success_rate(df, obj_frequencies):
             last_match[row.OId] = row.HId
         last_occurrence[row.OId] = f
     total = r_1 + r_2 + r_31 + r_32
+    print('\n'.join([str(i) for i in [r_0, r_1, r_2, r_31, r_32, r_3 - r_31 - r_32]]))
     return (r_1 + r_31) / total if total > 0 else -1
 
 def motp(df, num_detections):
